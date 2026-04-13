@@ -30,6 +30,8 @@ class ReportRequest(BaseModel):
     header_size: int = 12
     footer_size: int = 10
     logo_path: Optional[str] = LOGO_PATH
+    logo_size: float = 0.5
+    page_label: str = "Page no: "
     sections: Optional[dict[str, str]] = None
 
 
@@ -76,8 +78,10 @@ def generate_report(req: ReportRequest):
             req.prepared_by,
             header_font_size=req.header_size,
             footer_font_size=req.footer_size,
-            logo_path=req.logo_path
-        )
+            logo_path=req.logo_path,
+            logo_size=req.logo_size,
+            page_label=req.page_label
+            )
 
         apply_formatting(doc)
         apply_columns(doc)

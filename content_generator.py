@@ -20,12 +20,6 @@ def generate_content(doc, sections: dict = None):
 
         heading = doc.add_heading(f"Section {idx+1}: {sec}", level=1)
 
-        para = doc.add_paragraph()
-        run = para.add_run(f"{sec.upper()} PARAGRAPH")
-        run.bold = True
-        run.underline = True
-
-        para.paragraph_format.space_before = Pt(10)
-        para.paragraph_format.space_after = Pt(6)
+        
 
         doc.add_paragraph(sections[sec], style='List Bullet')

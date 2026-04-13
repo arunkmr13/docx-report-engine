@@ -3,7 +3,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 
-def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_font_size=10, footer_font_size=10, logo_path=None):
+def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_font_size=10, footer_font_size=10, logo_path=None, logo_size=0.5, page_label="Page no: "):
 
     for section in doc.sections:
 
@@ -24,14 +24,12 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
             mid_cell.width   = int(usable_width * 0.35)
             right_cell.width = int(usable_width * 0.53)
 
-            # Add logo image
             logo_para = logo_cell.paragraphs[0]
             run = logo_para.add_run()
-            run.add_picture(logo_path, width=Inches(0.5))
+            run.add_picture(logo_path, width=Inches(logo_size))
 
             mid_cell.text = company_name
             right_cell.text = f"{title} | {quarter}"
-
             right_cell.paragraphs[0].alignment = 2  # RIGHT
 
             for cell in [mid_cell, right_cell]:
@@ -49,7 +47,6 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
 
             left_cell.text = company_name
             right_cell.text = f"{title} | {quarter}"
-
             right_cell.paragraphs[0].alignment = 2  # RIGHT
 
             for cell in [left_cell, right_cell]:
@@ -71,7 +68,7 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
         right_cell.width = int(usable_width * 0.65)
 
         para = left_cell.paragraphs[0]
-        run = para.add_run("Page no: ")
+        run = para.add_run(page_label)
 
         fldChar1 = OxmlElement('w:fldChar')
         fldChar1.set(qn('w:fldCharType'), 'begin')
