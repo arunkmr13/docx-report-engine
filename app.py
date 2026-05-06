@@ -69,7 +69,7 @@ class ReportRequest(BaseModel):
     logo_position: str = "left"
     page_label: str = "Page no: "
     watermark: Optional[str] = None
-    sections: Optional[dict[str, str]] = None
+    sections: Optional[dict[str, list[dict]]] = None
 
 
 @app.post("/upload-logo")
