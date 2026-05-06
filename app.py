@@ -5,7 +5,7 @@ import shutil
 import time
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -101,26 +101,92 @@ def cleanup():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/enhance")
+async def enhance_document(
+    file: UploadFile = File(...),
+    title: str = Form(TITLE),
+    quarter: str = Form(QUARTER),
+    company_name: str = Form(COMPANY_NAME),
+    prepared_by: str = Form(PREPARED_BY),
+    logo_path: str = Form(LOGO_PATH),
+    logo_size: float = Form(0.5),
+    logo_position: str = Form("left"),
+    page_label: str = Form("Page no: "),
+    watermark: Optional[str] = Form(None)
+):
+    try:
+        # Validate file type
+        if not file.filename.endswith(".docx"):
+            raise HTTPException(
+                status_code=400,
+                detail="Only .docx files are supported"
+            )
+
+        # Save uploaded file temporarily
+        temp_path = f"output/temp_{uuid.uuid4().hex[:8]}.docx"
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Open existing document
+        doc = Document(temp_path)
+
+        # Validate logo path
+        if logo_path:
+            validate_asset_path(logo_path)
+
+        # Apply branding
+        apply_header_footer(
+            doc,
+            title,
+            quarter,
+            company_name,
+            prepared_by,
+            logo_path=logo_path,
+            logo_size=logo_size,
+            logo_position=logo_position,
+            page_label=page_label
+        )
+
+        apply_page_borders(doc)
+
+        if watermark:
+            apply_watermark(doc, watermark)
+
+        # Save enhanced document
+        filename = f"output/enhanced_{uuid.uuid4().hex[:8]}.docx"
+        doc.save(filename)
+
+        # Clean up temp file
+        os.remove(temp_path)
+
+        return FileResponse(
+            path=filename,
+            filename=os.path.basename(filename),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/generate")
 def generate_report(req: ReportRequest):
     try:
-        # Validate sections limit
         if req.sections and len(req.sections) > 10:
             raise HTTPException(
                 status_code=400,
                 detail="Maximum 10 sections allowed"
             )
 
-        # Validate logo path
         if req.logo_path:
             validate_asset_path(req.logo_path)
 
-        # Auto cleanup old files
         cleanup_files()
 
         doc = Document()
 
-        # Fix compatibility mode
         settings = doc.settings.element
         existing = settings.findall(
             './/{http://schemas.openxmlformats.org/wordprocessingml/2006/main}CompatSetting'
