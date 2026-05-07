@@ -3,6 +3,8 @@ import os
 import uuid
 import shutil
 import time
+import json
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -18,7 +20,7 @@ from modules.styles import apply_global_styles
 from modules.header_footer import apply_header_footer
 from modules.formatting import apply_formatting
 from modules.sections import apply_columns
-#from modules.borders import apply_page_borders
+from modules.borders import apply_page_borders
 from modules.watermark import apply_watermark
 from config import *
 
@@ -69,7 +71,61 @@ class ReportRequest(BaseModel):
     logo_position: str = "left"
     page_label: str = "Page no: "
     watermark: Optional[str] = None
+    extra_fields: Optional[dict] = None
     sections: Optional[dict[str, list[dict]]] = None
+
+
+def build_document(req: ReportRequest, doc: Document) -> str:
+    """Applies all modules to the given Document and saves it. Returns the output path."""
+    if req.sections and len(req.sections) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 sections allowed")
+
+    if req.logo_path:
+        validate_asset_path(req.logo_path)
+
+    cleanup_files()
+
+    # Fix compatibility mode
+    settings = doc.settings.element
+    existing = settings.findall(
+        './/{http://schemas.openxmlformats.org/wordprocessingml/2006/main}CompatSetting'
+    )
+    if not existing:
+        compat = OxmlElement('w:CompatSetting')
+        compat.set(qn('w:name'), 'compatibilityMode')
+        compat.set(qn('w:uri'), 'http://schemas.microsoft.com/office/word')
+        compat.set(qn('w:val'), '15')
+        settings.append(compat)
+
+    if req.sections:
+        generate_content(doc, req.sections)
+
+    apply_global_styles(doc)
+    apply_header_footer(
+        doc,
+        req.title,
+        req.quarter,
+        req.company_name,
+        req.prepared_by,
+        header_font_size=req.header_size,
+        footer_font_size=req.footer_size,
+        logo_path=req.logo_path,
+        logo_size=req.logo_size,
+        logo_position=req.logo_position,
+        page_label=req.page_label
+    )
+    apply_formatting(doc)
+    apply_columns(doc)
+    apply_page_borders(doc)
+
+    if req.watermark:
+        apply_watermark(doc, req.watermark)
+
+    filename = f"output/report_{uuid.uuid4().hex[:8]}.docx"
+    doc.core_properties.author = req.author
+    doc.core_properties.title = req.title
+    doc.save(filename)
+    return filename
 
 
 @app.post("/upload-logo")
@@ -78,10 +134,8 @@ async def upload_logo(file: UploadFile = File(...)):
         allowed = [".png", ".jpg", ".jpeg"]
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in allowed:
-            raise HTTPException(
-                status_code=400,
-                detail="Only .png, .jpg, .jpeg allowed"
-            )
+            raise HTTPException(status_code=400, detail="Only .png, .jpg, .jpeg allowed")
+
         save_path = f"assets/{file.filename}"
         with open(save_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -104,135 +158,45 @@ def cleanup():
 @app.post("/enhance")
 async def enhance_document(
     file: UploadFile = File(...),
-    title: str = Form(TITLE),
-    quarter: str = Form(QUARTER),
-    company_name: str = Form(COMPANY_NAME),
-    prepared_by: str = Form(PREPARED_BY),
-    logo_path: str = Form(LOGO_PATH),
-    logo_size: float = Form(0.5),
-    logo_position: str = Form("left"),
-    page_label: str = Form("Page no: "),
-    watermark: Optional[str] = Form(None)
+    config: str = Form(...)
 ):
+    """
+    Enhance an existing .docx file by applying header/footer, styles,
+    watermark, and other formatting on top of it.
+
+    - **file**: the existing .docx to enhance
+    - **config**: a JSON string matching the ReportRequest schema
+    """
     try:
-        # Validate file type
-        if not file.filename.endswith(".docx"):
+        # Parse JSON config
+        try:
+            req = ReportRequest(**json.loads(config))
+        except Exception:
             raise HTTPException(
-                status_code=400,
-                detail="Only .docx files are supported"
+                status_code=422,
+                detail="'config' must be a valid JSON string matching the ReportRequest schema"
             )
 
-        # Save uploaded file temporarily
-        temp_path = f"output/temp_{uuid.uuid4().hex[:8]}.docx"
-        with open(temp_path, "wb") as buffer:
+        # Validate uploaded file
+        if not file.filename.endswith(".docx"):
+            raise HTTPException(status_code=400, detail="Only .docx files are accepted")
+
+        # Save uploaded file to a temp path
+        tmp_path = f"output/tmp_{uuid.uuid4().hex[:8]}.docx"
+        with open(tmp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Open existing document
-        doc = Document(temp_path)
+        # Load the uploaded document and apply enhancements
+        doc = Document(tmp_path)
+        os.remove(tmp_path)
 
-        # Validate logo path
-        if logo_path:
-            validate_asset_path(logo_path)
-
-        # Apply branding
-        apply_header_footer(
-            doc,
-            title,
-            quarter,
-            company_name,
-            prepared_by,
-            logo_path=logo_path,
-            logo_size=logo_size,
-            logo_position=logo_position,
-            page_label=page_label
-        )
-
-        #apply_page_borders(doc)
-
-        if watermark:
-            apply_watermark(doc, watermark)
-
-        # Save enhanced document
-        filename = f"output/enhanced_{uuid.uuid4().hex[:8]}.docx"
-        doc.save(filename)
-
-        # Clean up temp file
-        os.remove(temp_path)
+        filename = build_document(req, doc)
 
         return FileResponse(
             path=filename,
             filename=os.path.basename(filename),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/generate")
-def generate_report(req: ReportRequest):
-    try:
-        if req.sections and len(req.sections) > 10:
-            raise HTTPException(
-                status_code=400,
-                detail="Maximum 10 sections allowed"
-            )
-
-        if req.logo_path:
-            validate_asset_path(req.logo_path)
-
-        cleanup_files()
-
-        doc = Document()
-
-        settings = doc.settings.element
-        existing = settings.findall(
-            './/{http://schemas.openxmlformats.org/wordprocessingml/2006/main}CompatSetting'
-        )
-        if not existing:
-            compat = OxmlElement('w:CompatSetting')
-            compat.set(qn('w:name'), 'compatibilityMode')
-            compat.set(qn('w:uri'), 'http://schemas.microsoft.com/office/word')
-            compat.set(qn('w:val'), '15')
-            settings.append(compat)
-
-        generate_content(doc, req.sections)
-        apply_global_styles(doc)
-
-        apply_header_footer(
-            doc,
-            req.title,
-            req.quarter,
-            req.company_name,
-            req.prepared_by,
-            header_font_size=req.header_size,
-            footer_font_size=req.footer_size,
-            logo_path=req.logo_path,
-            logo_size=req.logo_size,
-            logo_position=req.logo_position,
-            page_label=req.page_label
-        )
-
-        apply_formatting(doc)
-        apply_columns(doc)
-        #apply_page_borders(doc)
-
-        if req.watermark:
-            apply_watermark(doc, req.watermark)
-
-        filename = f"output/report_{uuid.uuid4().hex[:8]}.docx"
-        doc.core_properties.author = req.author
-        doc.core_properties.title = req.title
-        doc.save(filename)
-
-        return FileResponse(
-            path=filename,
-            filename=os.path.basename(filename),
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
-
     except HTTPException:
         raise
     except Exception as e:

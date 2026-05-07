@@ -32,16 +32,14 @@ def _disable_even_odd_headers(doc):
         settings.remove(even_odd)
 
 
-def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_font_size=10, footer_font_size=10, logo_path=None, logo_size=0.5, logo_position="left", page_label="Page no: "):
+def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_font_size=10, footer_font_size=10, logo_path=None, logo_size=0.5, logo_position="left", page_label="Page no: ", extra_fields=None):
 
-    # Disable even/odd headers globally — this is the root cause of missing headers on even pages
     _disable_even_odd_headers(doc)
 
     for section in doc.sections:
 
         section.different_first_page_header_footer = False
         _remove_first_page_references(section)
-
         section.header.is_linked_to_previous = False
         section.footer.is_linked_to_previous = False
 
@@ -124,7 +122,12 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
         footer = section.footer
         _clear_hf(footer._element)
 
-        table = footer.add_table(rows=1, cols=2, width=usable_width)
+        extras = extra_fields or {}
+        footer_rows = 2 if extras else 1
+
+        table = footer.add_table(rows=footer_rows, cols=2, width=usable_width)
+
+        # Row 1 — page number + prepared by
         left_cell  = table.rows[0].cells[0]
         right_cell = table.rows[0].cells[1]
         left_cell.width  = int(usable_width * 0.35)
@@ -151,3 +154,23 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
             for para in cell.paragraphs:
                 for run in para.runs:
                     run.font.size = Pt(footer_font_size)
+
+        # Row 2 — extra fields
+        if extras:
+            extra_left  = table.rows[1].cells[0]
+            extra_right = table.rows[1].cells[1]
+            extra_left.width  = int(usable_width * 0.50)
+            extra_right.width = int(usable_width * 0.50)
+
+            items = list(extras.items())
+            mid = len(items) // 2 + len(items) % 2
+            left_items  = items[:mid]
+            right_items = items[mid:]
+
+            left_text  = "  |  ".join(f"{k}: {v}" for k, v in left_items)
+            right_text = "  |  ".join(f"{k}: {v}" for k, v in right_items)
+
+            extra_left.paragraphs[0].add_run(left_text).font.size = Pt(footer_font_size - 1)
+            if right_text:
+                extra_right.paragraphs[0].add_run(right_text).font.size = Pt(footer_font_size - 1)
+                extra_right.paragraphs[0].alignment = 2
