@@ -3,16 +3,43 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 
+def _clear_hf(hf_element):
+    """Nuclear clear — removes every child XML node from header/footer."""
+    for child in list(hf_element):
+        hf_element.remove(child)
+    hf_element.text = None
+    hf_element.tail = None
+
+def _remove_first_page_references(section):
+    """Remove 'first' type header/footer references from sectPr XML."""
+    ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    sectPr = section._sectPr
+    for ref in list(sectPr):
+        tag = ref.tag.split('}')[1] if '}' in ref.tag else ref.tag
+        if tag in ('headerReference', 'footerReference'):
+            ref_type = ref.get(f'{{{ns}}}type')
+            if ref_type in ('first', 'even'):
+                sectPr.remove(ref)
+
+
+
 def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_font_size=10, footer_font_size=10, logo_path=None, logo_size=0.5, logo_position="left", page_label="Page no: "):
 
     for section in doc.sections:
+
+        # Disable first-page-different so header/footer shows on ALL pages
+        section.different_first_page_header_footer = False
+        _remove_first_page_references(section)
+
+        # Unlink from previous section so each section gets our content
+        section.header.is_linked_to_previous = False
+        section.footer.is_linked_to_previous = False
 
         usable_width = section.page_width - section.left_margin - section.right_margin
 
         # ---------------- HEADER ----------------
         header = section.header
-        p = header.paragraphs[0]._element
-        p.getparent().remove(p)
+        _clear_hf(header._element)
 
         if logo_path:
             table = header.add_table(rows=1, cols=3, width=usable_width)
@@ -21,52 +48,46 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
             cell_c = table.rows[0].cells[2]
 
             if logo_position == "left":
-                cell_a.width = int(usable_width * 0.12)  # logo — small
-                cell_b.width = int(usable_width * 0.33)  # company name
-                cell_c.width = int(usable_width * 0.55)  # title | quarter
-
-                logo_cell  = cell_a
-                mid_cell   = cell_b
-                text_cell  = cell_c
-
+                cell_a.width = int(usable_width * 0.12)
+                cell_b.width = int(usable_width * 0.33)
+                cell_c.width = int(usable_width * 0.55)
+                logo_cell = cell_a
+                mid_cell  = cell_b
+                text_cell = cell_c
                 mid_cell.text = company_name
-                mid_cell.paragraphs[0].alignment = 0   # LEFT
+                mid_cell.paragraphs[0].alignment = 0
                 text_cell.text = f"{title} | {quarter}"
-                text_cell.paragraphs[0].alignment = 2  # RIGHT
+                text_cell.paragraphs[0].alignment = 2
 
             elif logo_position == "center":
-                cell_a.width = int(usable_width * 0.35)  # company name
-                cell_b.width = int(usable_width * 0.12)  # logo — small
-                cell_c.width = int(usable_width * 0.53)  # title | quarter
-
-                logo_cell  = cell_b
-                mid_cell   = cell_a
-                text_cell  = cell_c
-
+                cell_a.width = int(usable_width * 0.35)
+                cell_b.width = int(usable_width * 0.12)
+                cell_c.width = int(usable_width * 0.53)
+                logo_cell = cell_b
+                mid_cell  = cell_a
+                text_cell = cell_c
                 mid_cell.text = company_name
-                mid_cell.paragraphs[0].alignment = 0   # LEFT
+                mid_cell.paragraphs[0].alignment = 0
                 text_cell.text = f"{title} | {quarter}"
-                text_cell.paragraphs[0].alignment = 2  # RIGHT
+                text_cell.paragraphs[0].alignment = 2
 
             elif logo_position == "right":
-                cell_a.width = int(usable_width * 0.35)  # company name
-                cell_b.width = int(usable_width * 0.53)  # title | quarter
-                cell_c.width = int(usable_width * 0.12)  # logo — small
-
-                logo_cell  = cell_c
-                mid_cell   = cell_a
-                text_cell  = cell_b
-
+                cell_a.width = int(usable_width * 0.35)
+                cell_b.width = int(usable_width * 0.53)
+                cell_c.width = int(usable_width * 0.12)
+                logo_cell = cell_c
+                mid_cell  = cell_a
+                text_cell = cell_b
                 mid_cell.text = company_name
-                mid_cell.paragraphs[0].alignment = 0   # LEFT
+                mid_cell.paragraphs[0].alignment = 0
                 text_cell.text = f"{title} | {quarter}"
-                text_cell.paragraphs[0].alignment = 2  # RIGHT
+                text_cell.paragraphs[0].alignment = 2
 
             else:
                 raise ValueError(f"Invalid logo_position '{logo_position}'. Use 'left', 'center', or 'right'.")
 
             logo_para = logo_cell.paragraphs[0]
-            logo_para.alignment = 1  # CENTER within its cell
+            logo_para.alignment = 1
             run = logo_para.add_run()
             run.add_picture(logo_path, width=Inches(logo_size))
 
@@ -79,14 +100,11 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
             table = header.add_table(rows=1, cols=2, width=usable_width)
             left_cell  = table.rows[0].cells[0]
             right_cell = table.rows[0].cells[1]
-
             left_cell.width  = int(usable_width * 0.35)
             right_cell.width = int(usable_width * 0.65)
-
             left_cell.text = company_name
             right_cell.text = f"{title} | {quarter}"
-            right_cell.paragraphs[0].alignment = 2  # RIGHT
-
+            right_cell.paragraphs[0].alignment = 2
             for cell in [left_cell, right_cell]:
                 for para in cell.paragraphs:
                     for run in para.runs:
@@ -94,14 +112,11 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
 
         # ---------------- FOOTER ----------------
         footer = section.footer
-        p = footer.paragraphs[0]._element
-        p.getparent().remove(p)
+        _clear_hf(footer._element)
 
         table = footer.add_table(rows=1, cols=2, width=usable_width)
-
         left_cell  = table.rows[0].cells[0]
         right_cell = table.rows[0].cells[1]
-
         left_cell.width  = int(usable_width * 0.35)
         right_cell.width = int(usable_width * 0.65)
 
@@ -110,10 +125,8 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
 
         fldChar1 = OxmlElement('w:fldChar')
         fldChar1.set(qn('w:fldCharType'), 'begin')
-
         instrText = OxmlElement('w:instrText')
         instrText.text = "PAGE"
-
         fldChar2 = OxmlElement('w:fldChar')
         fldChar2.set(qn('w:fldCharType'), 'end')
 
@@ -122,7 +135,7 @@ def apply_header_footer(doc, title, quarter, company_name, prepared_by, header_f
         run._r.append(fldChar2)
 
         right_cell.text = prepared_by
-        right_cell.paragraphs[0].alignment = 2  # RIGHT
+        right_cell.paragraphs[0].alignment = 2
 
         for cell in [left_cell, right_cell]:
             for para in cell.paragraphs:

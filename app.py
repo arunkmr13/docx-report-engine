@@ -18,7 +18,7 @@ from modules.styles import apply_global_styles
 from modules.header_footer import apply_header_footer
 from modules.formatting import apply_formatting
 from modules.sections import apply_columns
-from modules.borders import apply_page_borders
+#from modules.borders import apply_page_borders
 from modules.watermark import apply_watermark
 from config import *
 
@@ -147,7 +147,7 @@ async def enhance_document(
             page_label=page_label
         )
 
-        apply_page_borders(doc)
+        #apply_page_borders(doc)
 
         if watermark:
             apply_watermark(doc, watermark)
@@ -217,7 +217,7 @@ def generate_report(req: ReportRequest):
 
         apply_formatting(doc)
         apply_columns(doc)
-        apply_page_borders(doc)
+        #apply_page_borders(doc)
 
         if req.watermark:
             apply_watermark(doc, req.watermark)
