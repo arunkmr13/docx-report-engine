@@ -1,0 +1,9 @@
+services:
+  docx-report-engine:
+    build: .
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./assets:/app/assets
+      - ./output:/app/output
+    restart: unless-stopped
