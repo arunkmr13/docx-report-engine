@@ -26,39 +26,9 @@ from config import *
 
 app = FastAPI()
 
+# ── Schema ────────────────────────────────────────────────────────────────────
 
-def validate_asset_path(path: str) -> str:
-    assets_dir = os.path.abspath("assets")
-    full_path = os.path.abspath(path)
-    if not full_path.startswith(assets_dir):
-        raise HTTPException(
-            status_code=400,
-            detail="logo_path must be inside the assets/ folder"
-        )
-    if not os.path.exists(full_path):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Logo file not found: {path}"
-        )
-    return path
-
-
-def cleanup_files():
-    now = time.time()
-    for f in os.listdir("output"):
-        if f.endswith(".docx"):
-            path = os.path.join("output", f)
-            if os.path.getmtime(path) < now - 3600:
-                os.remove(path)
-    for f in os.listdir("assets"):
-        if f == "logo.jpeg":
-            continue
-        path = os.path.join("assets", f)
-        if os.path.getmtime(path) < now - 3600:
-            os.remove(path)
-
-
-class ReportRequest(BaseModel):
+class ReportConfig(BaseModel):
     title: str = TITLE
     quarter: str = QUARTER
     author: str = AUTHOR
@@ -66,7 +36,7 @@ class ReportRequest(BaseModel):
     prepared_by: str = PREPARED_BY
     header_size: int = 12
     footer_size: int = 10
-    logo_path: Optional[str] = LOGO_PATH
+    logo_path: Optional[str] = None
     logo_size: float = 0.5
     logo_position: str = "left"
     page_label: str = "Page no: "
@@ -74,9 +44,59 @@ class ReportRequest(BaseModel):
     extra_fields: Optional[dict] = None
     sections: Optional[dict[str, list[dict]]] = None
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "title": "BMJ Open Research Summary",
+                "quarter": "May 2026",
+                "author": "Arun Kumar",
+                "company_name": "Molecular Connections",
+                "prepared_by": "INT 1331",
+                "logo_size": 0.5,
+                "logo_position": "left",
+                "page_label": "Page no: ",
+                "watermark": "SAMPLE",
+                "header_size": 12,
+                "footer_size": 10
+            }
+        }
+    }
 
-def build_document(req: ReportRequest, doc: Document) -> str:
-    """Applies all modules to the given Document and saves it. Returns the output path."""
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def validate_asset_path(path: str) -> str:
+    assets_dir = os.path.abspath("assets")
+    full_path = os.path.abspath(path)
+    if not full_path.startswith(assets_dir):
+        raise HTTPException(status_code=400, detail="logo_path must be inside the assets/ folder")
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=400, detail=f"Logo file not found: {path}")
+    return path
+
+
+def cleanup_files():
+    now = time.time()
+    for folder in ["output", "assets"]:
+        for f in os.listdir(folder):
+            if folder == "assets" and f in ("logo.jpeg", "logo.jpg", "logo.png"):
+                continue
+            path = os.path.join(folder, f)
+            if os.path.isfile(path) and os.path.getmtime(path) < now - 3600:
+                os.remove(path)
+
+
+def save_logo(logo_file: UploadFile) -> str:
+    allowed = [".png", ".jpg", ".jpeg"]
+    ext = os.path.splitext(logo_file.filename)[1].lower()
+    if ext not in allowed:
+        raise HTTPException(status_code=400, detail="Logo must be .png, .jpg, or .jpeg")
+    save_path = f"assets/{logo_file.filename}"
+    with open(save_path, "wb") as buffer:
+        shutil.copyfileobj(logo_file.file, buffer)
+    return save_path
+
+
+def build_document(req: ReportConfig, doc: Document) -> str:
     if req.sections and len(req.sections) > 10:
         raise HTTPException(status_code=400, detail="Maximum 10 sections allowed")
 
@@ -128,65 +148,51 @@ def build_document(req: ReportRequest, doc: Document) -> str:
     return filename
 
 
-@app.post("/upload-logo")
-async def upload_logo(file: UploadFile = File(...)):
-    try:
-        allowed = [".png", ".jpg", ".jpeg"]
-        ext = os.path.splitext(file.filename)[1].lower()
-        if ext not in allowed:
-            raise HTTPException(status_code=400, detail="Only .png, .jpg, .jpeg allowed")
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
-        save_path = f"assets/{file.filename}"
-        with open(save_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        return {"status": "success", "logo_path": save_path}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/cleanup")
-def cleanup():
-    try:
-        cleanup_files()
-        return {"status": "success", "message": "Old files cleaned up"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/enhance")
+@app.post(
+    "/enhance",
+    summary="Enhance Document",
+    description="Upload an existing `.docx` and optionally a logo, then apply header, footer, watermark, and styles."
+)
 async def enhance_document(
-    file: UploadFile = File(...),
-    config: str = Form(...)
+    file: UploadFile = File(..., description="Existing .docx file to enhance"),
+    logo: Optional[UploadFile] = File(None, description="Logo image for header (.png / .jpg) — optional"),
+    config: str = Form(
+        ...,
+        description="JSON config string",
+        example='{"title":"BMJ Open Research Summary","quarter":"May 2026","author":"Arun Kumar","company_name":"Molecular Connections","prepared_by":"INT 1331","logo_size":0.5,"logo_position":"left","page_label":"Page no: ","watermark":"SAMPLE"}'
+    )
 ):
-    """
-    Enhance an existing .docx file by applying header/footer, styles,
-    watermark, and other formatting on top of it.
-
-    - **file**: the existing .docx to enhance
-    - **config**: a JSON string matching the ReportRequest schema
-    """
     try:
-        # Parse JSON config
+        # Parse config JSON
         try:
-            req = ReportRequest(**json.loads(config))
+            data = json.loads(config)
+            req = ReportConfig(**data)
         except Exception:
             raise HTTPException(
                 status_code=422,
-                detail="'config' must be a valid JSON string matching the ReportRequest schema"
+                detail="'config' must be a valid JSON string. See endpoint description for fields."
             )
 
-        # Validate uploaded file
+        # Validate docx
         if not file.filename.endswith(".docx"):
             raise HTTPException(status_code=400, detail="Only .docx files are accepted")
 
-        # Save uploaded file to a temp path
+        # Handle logo — uploaded file takes priority, then fall back to default
+        if logo and logo.filename:
+            req.logo_path = save_logo(logo)
+        elif req.logo_path is None:
+            for default in ["assets/logo.jpeg", "assets/logo.jpg", "assets/logo.png"]:
+                if os.path.exists(default):
+                    req.logo_path = default
+                    break
+
+        # Save uploaded docx temporarily
         tmp_path = f"output/tmp_{uuid.uuid4().hex[:8]}.docx"
         with open(tmp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Load the uploaded document and apply enhancements
         doc = Document(tmp_path)
         os.remove(tmp_path)
 
@@ -197,7 +203,21 @@ async def enhance_document(
             filename=os.path.basename(filename),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
+
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get(
+    "/cleanup",
+    summary="Cleanup",
+    description="Delete output files and temporary uploads older than 1 hour."
+)
+def cleanup():
+    try:
+        cleanup_files()
+        return {"status": "success", "message": "Old files cleaned up"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
