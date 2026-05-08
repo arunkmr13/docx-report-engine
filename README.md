@@ -152,17 +152,7 @@ Manually trigger cleanup of files older than 1 hour from `output/` and `assets/`
 - Error handling — all unhandled exceptions are caught and returned as `500` with a detail message, never a raw Python traceback.
 - File cleanup — generated files auto-delete after 1 hour, preventing disk exhaustion.
 
----
-
-## Known Limitations
-
-- No authentication on endpoints — suitable for local/internal use; add API key middleware for production
-- Uploaded logos are cleaned up after 1 hour — re-upload needed for recurring use
-- Only text-based watermarks supported — image watermarks not yet implemented
-- Report output is always a new unique file — no versioning or overwrite support
-- Two-column layout is fixed to Section 3 — not configurable per section yet
-
----
+------
 
 ## GitHub
 
