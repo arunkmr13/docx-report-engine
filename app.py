@@ -7,7 +7,7 @@ import json
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Body
+from fastapi import FastAPI, HTTPException, UploadFile, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -44,24 +44,6 @@ class ReportConfig(BaseModel):
     extra_fields: Optional[dict] = None
     sections: Optional[dict[str, list[dict]]] = None
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "title": "BMJ Open Research Summary",
-                "quarter": "May 2026",
-                "author": "Arun Kumar",
-                "company_name": "Molecular Connections",
-                "prepared_by": "INT 1331",
-                "logo_size": 0.5,
-                "logo_position": "left",
-                "page_label": "Page no: ",
-                "watermark": "SAMPLE",
-                "header_size": 12,
-                "footer_size": 10
-            }
-        }
-    }
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def validate_asset_path(path: str) -> str:
@@ -96,6 +78,27 @@ def save_logo(logo_file: UploadFile) -> str:
     with open(save_path, "wb") as buffer:
         shutil.copyfileobj(logo_file.file, buffer)
     return save_path
+
+
+async def parse_req(req_raw) -> ReportConfig:
+    """Parse req — Swagger sends it as an UploadFile blob with content-type application/json."""
+    try:
+        # Swagger UI sends the object-type field as an UploadFile blob
+        if hasattr(req_raw, "read"):
+            raw_bytes = await req_raw.read()
+            return ReportConfig(**json.loads(raw_bytes.decode("utf-8")))
+        # curl / direct API calls send it as a plain string
+        if isinstance(req_raw, (str, bytes)):
+            raw = req_raw if isinstance(req_raw, str) else req_raw.decode("utf-8")
+            return ReportConfig(**json.loads(raw))
+        # Already a dict
+        if isinstance(req_raw, dict):
+            return ReportConfig(**req_raw)
+        raise ValueError(f"Unexpected type: {type(req_raw)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"req must be a valid JSON object. Error: {e}")
 
 
 def build_document(req: ReportConfig, doc: Document) -> str:
@@ -163,21 +166,72 @@ Enhance a `.docx` file with header, footer, watermark, logo, and styles.
 
 **Steps in Swagger:**
 - Click **Try it out**
-- Upload `.docx` in the `file` query param
-- Upload logo in the `logo` query param (optional)
+- Upload `.docx` in the `file` field
+- Upload logo in the `logo` field (optional)
 - Edit the JSON body and click **Execute**
-"""
+""",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file", "req"],
+                        "properties": {
+                            "file": {
+                                "type": "string",
+                                "format": "binary",
+                                "description": "The .docx file to enhance"
+                            },
+                            "logo": {
+                                "type": "string",
+                                "format": "binary",
+                                "description": "Logo image (.png / .jpg) — optional"
+                            },
+                            "req": {
+                                "type": "object",
+                                "description": "JSON config",
+                                "properties": {
+                                    "title":         {"type": "string", "example": "BMJ Open Research Summary"},
+                                    "quarter":       {"type": "string", "example": "May 2026"},
+                                    "author":        {"type": "string", "example": "Arun Kumar"},
+                                    "company_name":  {"type": "string", "example": "Molecular Connections"},
+                                    "prepared_by":   {"type": "string", "example": "INT 1331"},
+                                    "header_size":   {"type": "integer", "example": 12},
+                                    "footer_size":   {"type": "integer", "example": 10},
+                                    "logo_path":     {"type": "string", "nullable": True, "example": None},
+                                    "logo_size":     {"type": "number", "example": 0.5},
+                                    "logo_position": {"type": "string", "example": "left"},
+                                    "page_label":    {"type": "string", "example": "Page no: "},
+                                    "watermark":     {"type": "string", "nullable": True, "example": "SAMPLE"},
+                                    "extra_fields":  {"type": "object", "nullable": True},
+                                    "sections":      {"type": "object", "nullable": True}
+                                }
+                            }
+                        }
+                    },
+                    "encoding": {
+                        "req": {"contentType": "application/json"}
+                    }
+                }
+            }
+        }
+    }
 )
-async def enhance_document(
-    file: UploadFile = File(..., description="The .docx file to enhance"),
-    logo: Optional[UploadFile] = File(None, description="Logo image (.png / .jpg) — optional"),
-    req: str = File(..., description="JSON config")
-):
+async def enhance_document(request: Request):
     try:
-        try:
-            req = ReportConfig(**json.loads(req))
-        except Exception:
-            raise HTTPException(status_code=422, detail="req must be a valid JSON object.")
+        form = await request.form()
+        file = form.get("file")
+        logo = form.get("logo")
+        req_raw = form.get("req")
+
+        if not file:
+            raise HTTPException(status_code=422, detail="file is required.")
+        if not req_raw:
+            raise HTTPException(status_code=422, detail="req is required.")
+
+        req = await parse_req(req_raw)
 
         if not file.filename.endswith(".docx"):
             raise HTTPException(status_code=400, detail="Only .docx files are accepted")
