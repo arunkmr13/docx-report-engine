@@ -140,7 +140,7 @@ def build_document(req: ReportConfig, doc: Document) -> str:
     )
     apply_formatting(doc)
     apply_columns(doc)
-    apply_page_borders(doc)
+    
 
     if req.watermark:
         apply_watermark(doc, req.watermark)
