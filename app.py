@@ -7,7 +7,7 @@ import json
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Body
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -76,7 +76,9 @@ def validate_asset_path(path: str) -> str:
 
 def cleanup_files():
     now = time.time()
-    for folder in ["output", "assets"]:
+    for folder in ["output", "assets", "uploads"]:
+        if not os.path.exists(folder):
+            continue
         for f in os.listdir(folder):
             if folder == "assets" and f in ("logo.jpeg", "logo.jpg", "logo.png"):
                 continue
@@ -105,7 +107,6 @@ def build_document(req: ReportConfig, doc: Document) -> str:
 
     cleanup_files()
 
-    # Fix compatibility mode
     settings = doc.settings.element
     existing = settings.findall(
         './/{http://schemas.openxmlformats.org/wordprocessingml/2006/main}CompatSetting'
@@ -153,33 +154,35 @@ def build_document(req: ReportConfig, doc: Document) -> str:
 @app.post(
     "/enhance",
     summary="Enhance Document",
-    description="Upload an existing `.docx` and optionally a logo, then apply header, footer, watermark, and styles."
+    description="""
+Enhance a `.docx` file with header, footer, watermark, logo, and styles.
+
+**How to use:**
+1. Upload your `.docx` and optional logo using the query parameters `file` and `logo`
+2. Fill in the JSON config body below with your report settings
+
+**Steps in Swagger:**
+- Click **Try it out**
+- Upload `.docx` in the `file` query param
+- Upload logo in the `logo` query param (optional)
+- Edit the JSON body and click **Execute**
+"""
 )
 async def enhance_document(
-    file: UploadFile = File(..., description="Existing .docx file to enhance"),
-    logo: Optional[UploadFile] = File(None, description="Logo image for header (.png / .jpg) — optional"),
-    config: str = Form(
-        ...,
-        description="JSON config string",
-        example='{"title":"BMJ Open Research Summary","quarter":"May 2026","author":"Arun Kumar","company_name":"Molecular Connections","prepared_by":"INT 1331","logo_size":0.5,"logo_position":"left","page_label":"Page no: ","watermark":"SAMPLE"}'
-    )
+    file: UploadFile = File(..., description="The .docx file to enhance"),
+    logo: Optional[UploadFile] = File(None, description="Logo image (.png / .jpg) — optional"),
+    req: str = File(..., description="JSON config")
 ):
     try:
-        # Parse config JSON
         try:
-            data = json.loads(config)
-            req = ReportConfig(**data)
+            req = ReportConfig(**json.loads(req))
         except Exception:
-            raise HTTPException(
-                status_code=422,
-                detail="'config' must be a valid JSON string. See endpoint description for fields."
-            )
+            raise HTTPException(status_code=422, detail="req must be a valid JSON object.")
 
-        # Validate docx
         if not file.filename.endswith(".docx"):
             raise HTTPException(status_code=400, detail="Only .docx files are accepted")
 
-        # Handle logo — uploaded file takes priority, then fall back to default
+        # Handle logo
         if logo and logo.filename:
             req.logo_path = save_logo(logo)
         elif req.logo_path is None:
@@ -189,9 +192,11 @@ async def enhance_document(
                     break
 
         # Save uploaded docx temporarily
+        os.makedirs("output", exist_ok=True)
         tmp_path = f"output/tmp_{uuid.uuid4().hex[:8]}.docx"
-        with open(tmp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        content = await file.read()
+        with open(tmp_path, "wb") as f:
+            f.write(content)
 
         doc = Document(tmp_path)
         os.remove(tmp_path)
