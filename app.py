@@ -43,6 +43,7 @@ class ReportConfig(BaseModel):
     watermark: Optional[str] = None
     extra_fields: Optional[dict] = None
     sections: Optional[dict[str, list[dict]]] = None
+    watermark_orientation: str = "diagonal"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ def build_document(req: ReportConfig, doc: Document) -> str:
     
 
     if req.watermark:
-        apply_watermark(doc, req.watermark)
+        apply_watermark(doc, req.watermark, req.watermark_orientation)
 
     filename = f"output/report_{uuid.uuid4().hex[:8]}.docx"
     doc.core_properties.author = req.author
